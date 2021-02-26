@@ -1,0 +1,223 @@
+---
+title: 'Data 622: Homework1'
+author: "Santosh Manjrekar"
+date: "2/19/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r loadlibrary, include=FALSE}
+library("palmerpenguins")
+library("dplyr")
+library("pROC")
+library("caret")
+
+```
+
+
+## 1. Logistic Regression with a binary outcome. 
+
+- a. The penguin dataset has ‘species’ column. Please check how many categories
+you have in the species column. Conduct whatever data manipulation you need
+to do to be able to build a logistic regression with binary outcome. Please explain
+your reasoning behind your decision as you manipulate the outcome/dependent
+variable (species).
+
+- b. Please make sure you are evaluating the independent variables appropriately in
+deciding which ones should be in the model. 
+
+- c. Provide variable interpretations in your model.
+
+
+
+# Data Exploration
+```{r include=FALSE}
+penguins_data <-palmerpenguins::penguins
+names(penguins_data)
+summary(penguins_data)
+```
+
+
+```{r include=FALSE}
+glimpse(penguins_data)
+```
+
+The penguins dataset has 344 observations and has one response or dependent variable (species) and 7 independent variables (island,bill_length_mm,bill_depth_mm,flipper_length_mm,body_mass_g,sex,year).
+
+# Missing values
+
+We will remove the records which has some of the column values as N/A
+
+```{r}
+#Remove NAs
+penguins_data <- penguins_data %>% na.omit() 
+```
+
+# Creating Binary variable isAdelie
+
+```{r}
+#Categories in species column
+penguins_data %>%
+  group_by(species) %>%
+  count() #there are THREE categories
+```
+
+
+After exploting data we see that there are 3 categories in species column (Adelie,Chinstrap and Gentoo).
+**From data it looks like "Adelie" is most popular category. In order to convert our outcome to binary outcome we can introduce two categories for species column "Adelie" or 1 and "Other" or 0.We will add isAdelie column for that.**
+
+```{r}
+# create isAdelie classification response variable
+penguins_data <- penguins_data %>%
+  mutate(isAdelie = ifelse(species == 'Adelie','Adelie','Other'))
+
+penguins_data$isAdelie <- factor(penguins_data$isAdelie, levels = c("Other", "Adelie"))
+```
+
+
+# Evaluating Independent Variables
+
+**Lets look at the correlation between the numeric variables. Looks like variables body_mass_g and flipper_length
+are positively correlated so we can consider one variable out of them in our model.**
+
+```{r}
+penguins_data %>% select_if(is.numeric) %>% cor()
+
+```
+
+For continuous independent variables, we can get more clarity on the distribution by analyzing it w.r.t. dependent variable.
+
+
+
+```{r}
+par(mfrow = c(2,2))
+
+boxplot(bill_length_mm~isAdelie, ylab="bill_length", xlab= "isAdelie", col="light blue",data = penguins_data)
+boxplot(bill_depth_mm~isAdelie, ylab="bill_depth", xlab= "isAdelie", col="light blue",data = penguins_data)
+boxplot(flipper_length_mm~isAdelie, ylab="flipper_length", xlab= "isAdelie", col="light blue",data = penguins_data)
+boxplot(body_mass_g~isAdelie, ylab="body_mass", xlab= "isAdelie", col="light blue",data = penguins_data)
+
+```
+
+# Some observations are as follows
+
+- Adelie species are smaller in length than other species
+- Adelie species has more depth than other species
+- Adelie species have smaller flipper length and  body mass
+- We can see that flipper length and body_mass variables are correlated
+
+For categorical independent variables, we can analyze the frequency of each category w.r.t. the dependent variable
+
+```{r}
+
+xtabs(~isAdelie + year, data = penguins_data)
+xtabs(~isAdelie + sex, data = penguins_data)
+
+```
+
+
+# Some observations are as follows
+
+- Year variable doesn't look like much impact in identifying Adelie species
+- Sex variable doesn't look like much impact in identifying Adelie species
+
+We can remove these variables from our dataset
+
+```{r}
+penguins_data <- subset(penguins_data, select = -c(year))
+penguins_data <- subset(penguins_data, select = -c(sex))
+
+
+```
+
+
+
+
+Train-Test Split
+Lets split the data. Have 70% data to train the model and keep remaining 30% for testing purpose.
+
+```{r}
+
+which_train <- sample(x = c(TRUE, FALSE), size = nrow(penguins_data), replace = TRUE, prob = c(0.7, 0.3))
+train_data <- penguins_data[which_train, ]
+test_data <- penguins_data[!which_train, ]
+
+
+```
+
+
+# Binary Logistic Regression
+
+Backwards stepwise regression is performed and the result is a model with the following variables: island, bill_depth_mm, and flipper_length_mm.
+
+```{r}
+logmodel <- glm(isAdelie ~ island + bill_depth_mm + flipper_length_mm, 
+                 family = 'binomial', 
+                 data = train_data)
+
+summary(logmodel)
+
+```
+# Coefficient Intrepretation
+
+Larger the coefficient there will be more of an impact on the positive classification or it being Adelie species. So variables
+having positive coefficients are being more indicative of Adelie species and negative coefficients as being indicative of no Adelie species.
+
+Some interesting observations
+
+- island: If a penguin lives on Dream island it is less likely to be of the Adelie species. If it lives on Torgersen it is more likely to be of the Adelie species.
+- bill_depth_mm: A positive value means that the larger the bill depth, the more likely the penguin is of the Adelie species.
+- flipper_length_mm: A negative value means that the larger the flipper size, the less likely the penguin is of the Adelie species.
+
+All of these coefficients align with our previous exploratory analysis!
+
+
+## 2. Metrics
+
+Lets use our model to predict values for the test set and then evaluate the model
+
+```{r}
+log_preds <- predict(logmodel, test_data, type = 'response')
+class_prediction <- factor(ifelse(log_preds > 0.50, "Adelie", "Other"), 
+                           levels = c("Other", "Adelie"))
+
+log_auc <- auc(response = test_data$isAdelie, predictor = log_preds)
+log_cm <- confusionMatrix(data = class_prediction, reference =test_data$isAdelie)
+log_accuracy <- log_cm$overall['Accuracy']
+log_tpr <- log_cm$byClass['Sensitivity']
+log_fpr <- 1 - log_tpr
+log_tnr <- log_cm$byClass['Specificity']
+log_fnr <- 1 - log_tnr
+
+
+```
+
+
+-   *AUC* - 0.97
+-   *Accuracy* - 0.8977
+-   *TPR (Sensitivity)* - 0.875
+-   *FPR (1-TPR)* - 0.125
+-   *TNR (Specificity)* - 0.937
+-   *FNR (1-TPR)* - 0.063
+
+
+## 3. Multinomial Logistic Regression
+
+First, we will define “Adelie” as the reference level (or “baseline species”) for the dataset. This means that our trained model will result in coefficients of the features for the remaining two species in relation to Adelie. We will start with a baseline model that includes all features.
+
+```{r}
+require(nnet)
+train_data$species <- relevel(train_data$species, ref = "Adelie")
+test_data$species <- relevel(test_data$species, ref = "Adelie")
+
+multinom_model <- multinom(species ~ ., data = train_data %>% select(-isAdelie))
+```
+
+```{r}
+summary(multinom_model)
+```
+The low AIC is indicative of a good model fit, so we will keep all of the variables in the model.
